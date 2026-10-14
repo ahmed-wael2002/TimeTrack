@@ -8,7 +8,7 @@ from timetrack.database import Database, Project
 from timetrack.export import export_project_sheet
 from timetrack.formatting import format_duration_words, format_hms
 from timetrack.theme import FONT_UI, THEME
-from timetrack.widgets import RoundedButton
+from timetrack.widgets import EllipsisLabel, RoundedButton, apply_window_icon
 
 
 class Modal(tk.Toplevel):
@@ -16,8 +16,10 @@ class Modal(tk.Toplevel):
         super().__init__(master)
         self.title(title)
         self.configure(bg=THEME.surface)
-        self.resizable(False, False)
+        self.resizable(True, True)
+        self.minsize(max(360, width // 2), max(240, height // 2))
         self.transient(master)
+        apply_window_icon(self)
         self.result = None
         self.update_idletasks()
         x = master.winfo_rootx() + (master.winfo_width() - width) // 2
@@ -56,7 +58,7 @@ class TextPrompt(Modal):
         height: int = 280,
     ) -> None:
         super().__init__(master, title, width=width, height=height)
-        tk.Label(
+        self._message = tk.Label(
             self,
             text=message,
             bg=THEME.surface,
@@ -65,7 +67,12 @@ class TextPrompt(Modal):
             wraplength=width - 48,
             justify="left",
             anchor="w",
-        ).pack(fill="x", padx=24)
+        )
+        self._message.pack(fill="x", padx=24)
+        self._message.bind(
+            "<Configure>",
+            lambda e: self._message.configure(wraplength=max(160, e.width)),
+        )
 
         self.var = tk.StringVar(value=initial)
         if multiline:
@@ -146,6 +153,7 @@ class TextPrompt(Modal):
 class ProjectPicker(Modal):
     def __init__(self, master, db: Database, selected_id: Optional[int] = None) -> None:
         super().__init__(master, "Projects", width=460, height=520)
+        self.minsize(420, 360)
         self.db = db
         self.selected_id = selected_id
         tk.Label(
@@ -174,8 +182,9 @@ class ProjectPicker(Modal):
         scroll = tk.Scrollbar(list_wrap, orient="vertical", command=self.canvas.yview)
         self.inner = tk.Frame(self.canvas, bg=THEME.bg)
         self.inner.bind("<Configure>", lambda _e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
-        self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
+        self._list_window = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
         self.canvas.configure(yscrollcommand=scroll.set)
+        self.canvas.bind("<Configure>", self._sync_list_width)
         self.canvas.pack(side="left", fill="both", expand=True)
         scroll.pack(side="right", fill="y")
         self.refresh()
@@ -208,6 +217,9 @@ class ProjectPicker(Modal):
         for project in projects:
             self._row(project)
 
+    def _sync_list_width(self, event) -> None:
+        self.canvas.itemconfigure(self._list_window, width=event.width)
+
     def _row(self, project: Project) -> None:
         selected = project.id == self.selected_id
         row = tk.Frame(self.inner, bg=THEME.surface, highlightthickness=1,
@@ -215,26 +227,26 @@ class ProjectPicker(Modal):
         row.pack(fill="x", padx=8, pady=6)
         body = tk.Frame(row, bg=THEME.surface)
         body.pack(fill="x", padx=12, pady=10)
+        body.columnconfigure(0, weight=1)
+        body.columnconfigure(1, weight=0)
         info = tk.Frame(body, bg=THEME.surface)
-        info.pack(side="left", fill="x", expand=True)
-        tk.Label(
+        info.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+        EllipsisLabel(
             info,
             text=project.name,
             bg=THEME.surface,
             fg=THEME.text,
             font=(FONT_UI, 11, "bold"),
-            anchor="w",
         ).pack(fill="x")
-        tk.Label(
+        EllipsisLabel(
             info,
             text=f"{project.track_count} tracks · {format_duration_words(project.total_seconds)}",
             bg=THEME.surface,
             fg=THEME.muted,
             font=(FONT_UI, 9),
-            anchor="w",
         ).pack(fill="x")
         btns = tk.Frame(body, bg=THEME.surface)
-        btns.pack(side="right")
+        btns.grid(row=0, column=1, sticky="e")
         self._tiny(btns, "Select", lambda p=project: self._select(p))
         self._tiny(btns, "Rename", lambda p=project: self._rename(p))
         self._tiny(btns, "Export", lambda p=project: self._export(p))
@@ -329,6 +341,7 @@ class OutputDialog(TextPrompt):
 class TracksWindow(Modal):
     def __init__(self, master, db: Database, project: Project) -> None:
         super().__init__(master, f"{project.name} — tracks", width=640, height=520)
+        self.minsize(420, 360)
         self.header.configure(text=project.name)
         tk.Label(
             self,
@@ -345,8 +358,13 @@ class TracksWindow(Modal):
         scroll = tk.Scrollbar(wrap, orient="vertical", command=canvas.yview)
         inner = tk.Frame(canvas, bg=THEME.bg)
         inner.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.create_window((0, 0), window=inner, anchor="nw", width=580)
+        list_window = canvas.create_window((0, 0), window=inner, anchor="nw")
         canvas.configure(yscrollcommand=scroll.set)
+
+        def _sync_width(event) -> None:
+            canvas.itemconfigure(list_window, width=event.width)
+
+        canvas.bind("<Configure>", _sync_width)
         canvas.pack(side="left", fill="both", expand=True)
         scroll.pack(side="right", fill="y")
 
@@ -358,16 +376,21 @@ class TracksWindow(Modal):
             card.pack(fill="x", padx=10, pady=6)
             top = tk.Frame(card, bg=THEME.surface)
             top.pack(fill="x", padx=12, pady=(10, 0))
-            tk.Label(top, text=track.title, bg=THEME.surface, fg=THEME.text, font=(FONT_UI, 11, "bold"), anchor="w").pack(
-                side="left", fill="x", expand=True
-            )
+            top.columnconfigure(0, weight=1)
+            EllipsisLabel(
+                top,
+                text=track.title,
+                bg=THEME.surface,
+                fg=THEME.text,
+                font=(FONT_UI, 11, "bold"),
+            ).grid(row=0, column=0, sticky="ew", padx=(0, 8))
             tk.Label(
                 top,
                 text=format_hms(track.duration_seconds),
                 bg=THEME.surface,
                 fg=THEME.primary,
                 font=(FONT_UI, 11, "bold"),
-            ).pack(side="right")
+            ).grid(row=0, column=1, sticky="e")
             tk.Label(
                 card,
                 text=f"{track.day_date}  ·  {track.start_time} – {track.end_time}",
@@ -376,7 +399,7 @@ class TracksWindow(Modal):
                 font=(FONT_UI, 9),
                 anchor="w",
             ).pack(fill="x", padx=12)
-            tk.Label(
+            output = tk.Label(
                 card,
                 text=track.output or "No output recorded",
                 bg=THEME.surface,
@@ -385,7 +408,9 @@ class TracksWindow(Modal):
                 wraplength=540,
                 justify="left",
                 anchor="w",
-            ).pack(fill="x", padx=12, pady=(4, 12))
+            )
+            output.pack(fill="x", padx=12, pady=(4, 12))
+            output.bind("<Configure>", lambda e, lbl=output: lbl.configure(wraplength=max(160, e.width)))
 
         footer = tk.Frame(self, bg=THEME.surface)
         footer.pack(fill="x", padx=24, pady=(0, 18))

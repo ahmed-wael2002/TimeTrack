@@ -12,6 +12,17 @@ def app_dir() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
+def bundled_path(*parts: str) -> Path:
+    """Files packed into the exe (PyInstaller) or the source tree."""
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS).joinpath(*parts)
+    return app_dir().joinpath(*parts)
+
+
+def icon_png() -> Path:
+    return bundled_path("assets", "icon.png")
+
+
 def data_dir() -> Path:
     folder = app_dir() / "data"
     folder.mkdir(parents=True, exist_ok=True)

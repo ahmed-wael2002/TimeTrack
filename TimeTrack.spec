@@ -10,7 +10,7 @@ a = Analysis(
     ['E:/TimeTrack/main.py'],
     pathex=['E:/TimeTrack'],
     binaries=[],
-    datas=[],
+    datas=[('E:/TimeTrack/assets/icon.png', 'assets'), ('E:/TimeTrack/assets/icon.ico', 'assets')],
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
@@ -40,4 +40,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=['E:/TimeTrack/assets/icon.ico'],
 )

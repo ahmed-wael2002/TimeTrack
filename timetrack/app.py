@@ -10,7 +10,13 @@ from timetrack.dialogs import OutputDialog, ProjectPicker, TracksWindow, UserNam
 from timetrack.formatting import format_duration_words, format_hms, now_clock, now_display
 from timetrack.theme import FONT_DISPLAY, FONT_UI, THEME
 from timetrack.timer_service import TimerService, TimerSnapshot
-from timetrack.widgets import CircleActionButton, FadeFrame, ProjectCard, RoundedButton
+from timetrack.widgets import (
+    CircleIconButton,
+    FadeFrame,
+    ProjectCard,
+    RoundedButton,
+    apply_window_icon,
+)
 
 
 class TimeTrackApp(tk.Tk):
@@ -20,7 +26,9 @@ class TimeTrackApp(tk.Tk):
         self.configure(bg=THEME.bg)
         self.minsize(460, 720)
         self.geometry("520x800")
-        self._enable_dpi()
+        self.resizable(True, True)
+        apply_window_icon(self)
+        self._apply_tk_scaling()
 
         self.db = Database()
         self.timer = TimerService()
@@ -34,19 +42,16 @@ class TimeTrackApp(tk.Tk):
         self.bind("<space>", self._on_space)
         self.focus_set()
 
-    def _enable_dpi(self) -> None:
-        if sys.platform == "win32":
-            try:
-                from ctypes import windll
-
-                windll.shcore.SetProcessDpiAwareness(1)
-            except Exception:
-                try:
-                    windll.user32.SetProcessDPIAware()
-                except Exception:
-                    pass
+    def _apply_tk_scaling(self) -> None:
+        if sys.platform != "win32":
+            return
         try:
-            self.tk.call("tk", "scaling", 1.15)
+            from ctypes import windll
+
+            self.update_idletasks()
+            dpi = windll.user32.GetDpiForWindow(self.winfo_id())
+            if dpi:
+                self.tk.call("tk", "scaling", dpi / 72.0)
         except Exception:
             pass
 
@@ -80,8 +85,17 @@ class TimeTrackApp(tk.Tk):
         )
         self.clock_label.pack(pady=(4, 8))
 
-        self.play = CircleActionButton(hero, diameter=168, command=self._toggle_play, canvas_bg=THEME.bg)
-        self.play.pack()
+        self.action_row = tk.Frame(hero, bg=THEME.bg)
+        self.action_row.pack(pady=(4, 0))
+        self.play = CircleIconButton(self.action_row, diameter=168, command=self._toggle_play, canvas_bg=THEME.bg)
+        self.play.grid(row=0, column=0)
+        self.stop_btn = CircleIconButton(
+            self.action_row,
+            diameter=78,
+            command=self._stop_track,
+            canvas_bg=THEME.bg,
+            role="stop",
+        )
 
         self.title_wrap = FadeFrame(hero, bg=THEME.bg)
         tk.Label(
@@ -105,19 +119,6 @@ class TimeTrackApp(tk.Tk):
             justify="center",
         )
         self.title_entry.pack(fill="x", ipady=10, padx=1, pady=1)
-
-        controls = tk.Frame(hero, bg=THEME.bg)
-        controls.pack(pady=(16, 0))
-        self.stop_btn = RoundedButton(
-            controls,
-            "Stop & save",
-            command=self._stop_track,
-            width=160,
-            height=42,
-            bg=THEME.danger,
-            hover="#BE123C",
-            canvas_bg=THEME.bg,
-        )
 
         project_bar = tk.Frame(self, bg=THEME.bg)
         project_bar.pack(fill="x", padx=28, pady=(4, 8))
@@ -250,19 +251,21 @@ class TimeTrackApp(tk.Tk):
                 return
             self.timer.start()
             self._show_title()
-            self.stop_btn.pack()
-            self.play.set_mode("running")
-            self.status_label.configure(text="Tracking — stay in flow")
+            self._show_stop()
+            self.play.set_mode("running", animate=True)
+            self._animate_clock("start")
+            self.status_label.configure(text="Tracking — stay in flow", fg=THEME.primary)
             self.title_entry.focus_set()
             return
         if self.timer.is_paused():
             self.timer.resume()
-            self.play.set_mode("running")
-            self.status_label.configure(text="Tracking — stay in flow")
+            self.play.set_mode("running", animate=True)
+            self._animate_clock("resume")
+            self.status_label.configure(text="Tracking — stay in flow", fg=THEME.primary)
         else:
             self.timer.pause()
-            self.play.set_mode("paused")
-            self.status_label.configure(text="Paused")
+            self.play.set_mode("paused", animate=True)
+            self.status_label.configure(text="Paused", fg=THEME.muted)
 
     def _show_title(self) -> None:
         if not self._title_shown:
@@ -278,6 +281,8 @@ class TimeTrackApp(tk.Tk):
         if not self.timer.is_active():
             return
         snapshot = self.timer.stop()
+        self.play.set_mode("idle", animate=True)
+        self._animate_clock("stop")
         if snapshot.elapsed_seconds < 1:
             self._reset_ui()
             return
@@ -302,12 +307,30 @@ class TimeTrackApp(tk.Tk):
         self._reset_ui()
         self._refresh_projects()
 
+    def _show_stop(self) -> None:
+        self.stop_btn.grid(row=0, column=1, padx=(2, 8))
+        self.stop_btn.pop_in()
+
+    def _hide_stop(self) -> None:
+        self.stop_btn.grid_remove()
+
+    def _animate_clock(self, kind: str) -> None:
+        if kind == "stop":
+            self.clock_label.configure(fg=THEME.danger, font=(FONT_DISPLAY, 32, "bold"))
+        else:
+            self.clock_label.configure(fg=THEME.primary, font=(FONT_DISPLAY, 40, "bold"))
+        self.after(
+            220,
+            lambda: self.clock_label.configure(fg=THEME.text, font=(FONT_DISPLAY, 36, "bold")),
+        )
+
     def _reset_ui(self) -> None:
         self.timer.reset()
-        self.play.set_mode("idle")
+        self.play.set_mode("idle", animate=True)
         self.clock_label.configure(text="00:00:00")
-        self.status_label.configure(text="Ready when you are")
-        self.stop_btn.pack_forget()
+        self._animate_clock("stop")
+        self.status_label.configure(text="Ready when you are", fg=THEME.muted)
+        self._hide_stop()
         self._hide_title()
 
     def _on_timer_thread(self, snapshot: TimerSnapshot) -> None:
@@ -321,9 +344,9 @@ class TimeTrackApp(tk.Tk):
             return
         self.clock_label.configure(text=snapshot.display)
         if snapshot.paused:
-            self.status_label.configure(text="Paused")
+            self.status_label.configure(text="Paused", fg=THEME.muted)
         else:
-            self.status_label.configure(text="Tracking — stay in flow")
+            self.status_label.configure(text="Tracking — stay in flow", fg=THEME.primary)
 
     def _open_tracks(self) -> None:
         project = self._ensure_project()
@@ -358,6 +381,27 @@ class TimeTrackApp(tk.Tk):
         self.destroy()
 
 
+def _enable_dpi() -> None:
+    """Must run before any window is created so canvas icons are not bitmap-stretched."""
+    if sys.platform != "win32":
+        return
+    try:
+        from ctypes import c_void_p, windll
+
+        try:
+            windll.user32.SetProcessDpiAwarenessContext(c_void_p(-4))
+        except Exception:
+            windll.shcore.SetProcessDpiAwareness(2)
+    except Exception:
+        try:
+            from ctypes import windll
+
+            windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
+
 def main() -> None:
+    _enable_dpi()
     app = TimeTrackApp()
     app.mainloop()
